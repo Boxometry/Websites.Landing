@@ -3,23 +3,22 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Boxometry</title>
+    <title>BOXOMETRY</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="apple-touch-icon" sizes="180x180" href="assets/apple-touch-icon.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32x32.png">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        @font-face {
-            font-family: 'Nexa Bold';
-            src: local('Nexa Bold'), local('Nexa-Bold'), url('Nexa Bold.otf');
-            font-weight: bold;
-        }
-
         body {
             margin: 0;
             padding: 0;
             overflow: hidden;
             background-color: #0d0e12; /* Slightly brighter than pure black */
             color: white;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            font-family: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
         }
         #canvas-container {
             position: absolute;
@@ -40,20 +39,11 @@
             pointer-events: none;
         }
         .logo-container {
-            width: 240px; /* Increased size for the wide logo format */
+            width: 350px; /* Increased size from 240px */
+            max-width: 90vw;
             height: auto;
             margin-bottom: 1.5rem;
             animation: fadeIn 1.5s ease-out;
-        }
-        .url-text {
-            font-family: 'Nexa Bold', 'Inter', -apple-system, sans-serif;
-            font-weight: 800;
-            font-size: 1.4rem;
-            letter-spacing: 0.15em;
-            text-transform: lowercase;
-            color: #ffffff;
-            text-shadow: 0 0 20px rgba(0, 85, 255, 0.3); /* Subtle glow to match brighter wave */
-            animation: fadeInDelayed 2s ease-out forwards;
         }
         @keyframes fadeIn {
             from { opacity: 0; transform: translateY(20px); }
@@ -72,21 +62,29 @@
 
     <div class="content">
         <div class="logo-container">
-            <img src="assets/boxometry-logo-full-wob.svg" alt="Boxometry Logo" class="w-full h-auto">
+            <img src="assets/boxometry-logo-full-wob.svg" alt="Boxometry Logo" class="w-full h-auto" onerror="this.src='data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyMDAgNTAiPjx0ZXh0IHg9IjEwMCIgeT0iMzAiIGZvbnQtZmFtaWx5PSJBcmlhbCIgZm9udC1zaXplPSIyNCIgZmlsbD0id2hpdGUiIHRleHQtYW5jaG9yPSJtaWRkbGUiPkJPWE9NRVRSWTwvdGV4dD48L3N2Zz4='">
         </div>
-        <!-- <div class="url-text">boxometry.tech</div> -->
     </div>
 
     <script>
         let scene, camera, renderer, particles, count = 0;
         const SEPARATION = 40, AMOUNTX = 100, AMOUNTY = 100;
+        
+        // Raycaster and mouse variables for the ripple effect
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2(-9999, -9999); // Start off-screen
+        const lastMousePos = new THREE.Vector2(-9999, -9999); // Track mouse movement
+        const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+        const intersectionPoint = new THREE.Vector3();
+        const currentRippleCenter = new THREE.Vector3(); // For smooth dragging
+        let rippleIntensity = 0; // Fades in/out based on movement
+        let lastMouseMoveTime = 0; // Track when the mouse last moved
 
         function init() {
             const container = document.getElementById('canvas-container');
 
             camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 1, 10000);
-            camera.position.z = 1000;
-            camera.position.y = 500;
+            camera.position.set(0, 450, 1000); // Set a static camera position
             camera.lookAt(new THREE.Vector3(0, 0, 0));
 
             scene = new THREE.Scene();
@@ -132,15 +130,13 @@
             container.appendChild(renderer.domElement);
 
             window.addEventListener('resize', onWindowResize, false);
-            
-            // Add subtle mouse interaction
             document.addEventListener('mousemove', onMouseMove, false);
         }
 
-        let mouseX = 0, mouseY = 0;
         function onMouseMove(event) {
-            mouseX = (event.clientX - window.innerWidth / 2) * 0.1;
-            mouseY = (event.clientY - window.innerHeight / 2) * 0.1;
+            // Calculate mouse position in normalized device coordinates (-1 to +1)
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
         }
 
         function onWindowResize() {
@@ -156,20 +152,75 @@
 
         function render() {
             const positions = particles.geometry.attributes.position.array;
+            
+            // Update the picking ray with the camera and mouse position
+            raycaster.setFromCamera(mouse, camera);
+            
+            // Check intersection with our mathematical base plane (y = 0)
+            const intersects = raycaster.ray.intersectPlane(plane, intersectionPoint);
+
+            // Handle smooth tracking and fading based on movement
+            if (intersects && mouse.x !== -9999) {
+                // Check how far the mouse has moved since last frame
+                const mouseDelta = Math.abs(mouse.x - lastMousePos.x) + Math.abs(mouse.y - lastMousePos.y);
+                lastMousePos.copy(mouse);
+
+                if (mouseDelta > 0.0001) {
+                    lastMouseMoveTime = performance.now();
+                }
+
+                // Stop 5 seconds (5000ms) after the mouse stops
+                if (performance.now() - lastMouseMoveTime < 5000) {
+                    rippleIntensity = Math.min(rippleIntensity + 0.02, 1.0); // Smooth fade in
+                } else {
+                    rippleIntensity = Math.max(rippleIntensity - 0.01, 0.0); // Smooth fade out
+                }
+
+                // Smoothly drag the ripple center towards the actual cursor intersection
+                if (rippleIntensity === 0) {
+                    // Snap ONLY when completely invisible to avoid visual jumps
+                    currentRippleCenter.copy(intersectionPoint);
+                } else {
+                    // Slightly faster drag.
+                    currentRippleCenter.lerp(intersectionPoint, 0.04);
+                }
+            } else {
+                rippleIntensity = Math.max(rippleIntensity - 0.01, 0.0);
+            }
+
             let i = 0;
 
             for (let ix = 0; ix < AMOUNTX; ix++) {
                 for (let iy = 0; iy < AMOUNTY; iy++) {
-                    // Use layered trig functions with different frequencies and phases
-                    // to simulate the complexity of Perlin noise
                     const xFactor = ix * 0.15;
                     const yFactor = iy * 0.15;
                     const time = count * 0.5;
 
-                    const h = (Math.sin(xFactor + time) * 30) +
-                              (Math.sin(yFactor + time * 1.2) * 30) +
-                              (Math.sin((xFactor + yFactor) * 0.5 + time * 0.8) * 25) +
-                              (Math.sin(Math.sqrt(xFactor * xFactor + yFactor * yFactor) * 0.2 + time) * 15);
+                    // Base undulating ocean effect
+                    let h = (Math.sin(xFactor + time) * 30) +
+                            (Math.sin(yFactor + time * 1.2) * 30) +
+                            (Math.sin((xFactor + yFactor) * 0.5 + time * 0.8) * 25) +
+                            (Math.sin(Math.sqrt(xFactor * xFactor + yFactor * yFactor) * 0.2 + time) * 15);
+
+                    // Add local ripple effect around the smoothed center, scaled by intensity
+                    if (rippleIntensity > 0) {
+                        const px = positions[i];
+                        const pz = positions[i + 2];
+                        
+                        // Calculate distance from point to the dragging smoothed center
+                        const dx = px - currentRippleCenter.x;
+                        const dz = pz - currentRippleCenter.z;
+                        const dist = Math.sqrt(dx * dx + dz * dz);
+                        const maxDist = 450; // Ripple radius
+
+                        if (dist < maxDist) {
+                            // Calculate a smooth falloff based on distance
+                            const damping = Math.pow(1 - (dist / maxDist), 2);
+                            // Ripple math: sine wave traveling outward (slower and much more subtle)
+                            const ripple = Math.sin(dist * 0.03 - count * 1.5) * 12 * damping * rippleIntensity;
+                            h += ripple;
+                        }
+                    }
 
                     positions[i + 1] = h;
                     i += 3;
@@ -177,12 +228,8 @@
             }
 
             particles.geometry.attributes.position.needsUpdate = true;
-            
-            camera.position.x += (mouseX - camera.position.x) * 0.05;
-            camera.position.y += (-mouseY + 450 - camera.position.y) * 0.05;
-            camera.lookAt(scene.position);
-
             renderer.render(scene, camera);
+            
             count += 0.03; // Slightly slower speed for a more majestic feel
         }
 
